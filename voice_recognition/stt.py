@@ -38,46 +38,109 @@ import numpy as np
 import sys
 import numpy as np # Для преобразования данных
 from av import AudioFrame
+from scipy.signal import resample
+# class STT:
+#     def __init__(self, modelpath: str = "model", sample_rate: int = 16000):
+#         self.model = vosk.Model(modelpath)
+#         self.recognizer = None # Инициализируем при первом вызове process_frame
+#         self.sample_rate = sample_rate
+
+#     async def process_frame(self, frame: AudioFrame):
+    
+
+#         if self.recognizer is None:
+#             self.recognizer = vosk.KaldiRecognizer(self.model, 16000)
+#             audio_data = frame.to_ndarray()
+#             print(f" Sample rate: {frame.sample_rate}, self:{self.sample_rate}")    
+#             if audio_data.dtype != np.int16:
+#                 audio_data = np.int16(audio_data * 32767)
+#             audio_data_resampled = resample(audio_data, int(len(audio_data) * 16000 / 48000))
+
+#             with wave.open('first_frame.wav', 'wb') as wf:
+#                 wf.setnchannels(2) # Устанавливаем количество каналов
+#                 wf.setsampwidth(2) # 2 байта на сэмпл (16 бит)
+#                 wf.setframerate(frame.sample_rate)
+#                 wf.writeframesraw(audio_data_resampled.tobytes())
+#         # Преобразование фрейма в формат, понятный Vosk
+       
+#         data = self._convert_frame_to_vosk_format(frame)
+#         if self.recognizer.AcceptWaveform(data):
+#             result = json.loads(self.recognizer.Result())
+#             # if "text" in result and result["text"]: # Проверка на пустую строку
+#             return result["text"]
+#         elif self.recognizer.PartialResult(): # Промежуточные результаты
+#           result = json.loads(self.recognizer.PartialResult())
+#           if "partial" in result and result["partial"]: # Проверка на пустую строку
+#                 return result["partial"]
+
+#         return None # Возвращаем None, если распознавания не произошло
+    
+#     def _convert_frame_to_vosk_format(self, frame: AudioFrame):
+#         """Преобразует AudioFrame (из библиотеки av) в формат, подходящий для Vosk."""
+
+#         # 1. Получаем данные в виде numpy array
+#         audio_data = frame.to_ndarray()
+
+#         # 2. Преобразуем в int16 с масштабированием, если нужно
+#         if audio_data.dtype != np.int16:
+#             audio_data = np.int16(audio_data * 32767)
+#         buf = []
+#         for i, item in audio_data.reshape(-1):
+#             if(i%2 == 0):
+#                 buf.append(item)
+#         audio_data = buf
+#         # audio_data_resampled = resample(audio_data, int(len(audio_data) * 16000 / 48000))
+        
+#         # 3. Преобразуем в байты
+#         audio_bytes = audio_data.tobytes()
+#         return audio_bytes
 class STT:
-    def __init__(self, modelpath: str = "model", sample_rate: int = 16000):
+    def __init__(self, modelpath: str = "model", sample_rate: int = 8000): # Убедитесь, что это 8000
         self.model = vosk.Model(modelpath)
-        self.recognizer = None # Инициализируем при первом вызове process_frame
+        self.recognizer = vosk.KaldiRecognizer(self.model, sample_rate)
         self.sample_rate = sample_rate
+        print(f"STT_LOG: Initialized with sample rate: {self.sample_rate}")
 
     async def process_frame(self, frame: AudioFrame):
-        """
-        Распознает речь в переданном аудиофрейме.
+        print(f"STT_LOG: process_frame called. Frame SR: {frame.sample_rate}, Layout: {frame.layout}, Samples: {frame.samples}")
+        if frame is None:
+            print("STT_LOG: Received None frame, skipping.")
+            return None
 
-        Args:
-            frame: Аудиофрейм (aiortc.AudioFrame).
-        """
+        # Проверяем, соответствует ли частота дискретизации фрейма той, что ожидает распознаватель
+        if frame.sample_rate != self.sample_rate:
+            print(f"STT_LOG: ERROR - Frame sample rate ({frame.sample_rate}) "
+                  f"does not match recognizer sample rate ({self.sample_rate}). "
+                  "Resampling should have happened before this point.")
+            # Здесь можно либо возбудить исключение, либо попытаться проигнорировать/обработать,
+            # но это указывает на проблему в вызывающем коде.
+            return "Error: Sample rate mismatch"
 
-        if self.recognizer is None:
-            self.recognizer = vosk.KaldiRecognizer(self.model, self.sample_rate)
+        audio_data_for_vosk = frame.to_ndarray().tobytes() # Должен быть уже моно, s16, нужная SR
 
-        # Преобразование фрейма в формат, понятный Vosk
-       
-        data = frame.to_ndarray().tobytes()
+        # Отладочная запись в WAV
+        try:
+            with wave.open('debug_audio_for_vosk.wav', 'wb') as wf:
+                wf.setnchannels(1) # Моно
+                wf.setsampwidth(frame.format.bytes) # 
+                wf.setframerate(frame.sample_rate) # Должно быть self.sample_rate
+                wf.writeframesraw(audio_data_for_vosk)
+            print("STT_LOG: Saved debug_audio_for_vosk.wav")
+        except Exception as e:
+            print(f"STT_LOG: Error saving debug WAV: {e}")
 
-        if self.recognizer.AcceptWaveform(data):
-            result = json.loads(self.recognizer.Result())
-            # if "text" in result and result["text"]: # Проверка на пустую строку
-            return result["text"]
-        elif self.recognizer.PartialResult(): # Промежуточные результаты
-          result = json.loads(self.recognizer.PartialResult())
-          if "partial" in result and result["partial"]: # Проверка на пустую строку
-                return result["partial"]
+        recognized_text = None
+        if self.recognizer.AcceptWaveform(audio_data_for_vosk):
+            result_json = self.recognizer.Result()
+            print(f"STT_LOG: Vosk Result: {result_json}")
+            result = json.loads(result_json)
+            if "text" in result and result["text"]:
+                recognized_text = result["text"]
+        else:
+            partial_result_json = self.recognizer.PartialResult()
+            print(f"STT_LOG: Vosk PartialResult: {partial_result_json}")
+            partial_result = json.loads(partial_result_json) # Можно обработать и частичные
+            if "partial" in partial_result and partial_result["partial"]:
+                return partial_result
 
-        return None # Возвращаем None, если распознавания не произошло
-    
-    def _convert_frame_to_wav(self, frame: AudioFrame):
-        """Преобразует AudioFrame в байты WAV."""
-        with io.BytesIO() as wav_buffer:
-            with wave.open(wav_buffer, 'wb') as wf:
-                wf.setnchannels(frame.channels)
-                wf.setsampwidth(2) # 16-bit PCM
-                wf.setframerate(frame.sample_rate)
-                # Ключевое изменение: преобразование в int16 с правильным масштабированием
-                audio_int16 = (np.int16(frame.to_ndarray() * 32767)).tobytes() # Масштабирование
-                wf.writeframesraw(audio_int16)
-            return wav_buffer.getvalue()
+        return recognized_text

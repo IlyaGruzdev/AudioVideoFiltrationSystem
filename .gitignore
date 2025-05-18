@@ -5,7 +5,7 @@ idea
 *.egg-info/
 .installed.cfg
 *.egg
-
+RNNoise_Wrapper
 dist
 db.sqlite3
 sqlite.db
