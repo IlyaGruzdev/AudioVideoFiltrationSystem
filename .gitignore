@@ -1,7 +1,7 @@
 .idea
 idea
 .DS_Store
-
+.wav
 *.egg-info/
 .installed.cfg
 *.egg
