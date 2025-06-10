@@ -10,5 +10,5 @@
 ## Start (Старт)
 
     pip install -r requirements.txt
-    uvicorn main:app
+    uvicorn app.main:app
 # AudioVideoFiltrationSystem
